@@ -89,3 +89,5 @@ def step_chin(universe: Universe, dt: Scalar) -> Universe:
 	U = [update_velocity(p, p.velocity + dt*(3/8)*grav_accel(p, U)) for p in U]
 	U = [update_position(p, p.position + dt*(1/6)*p.velocity) for p in U]
 	return U
+
+step = step_chin

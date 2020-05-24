@@ -1,12 +1,27 @@
+import importlib
 from math import log, ceil, floor, pi
 from pathlib import Path
 import pyrr
 import moderngl
 import moderngl_window
-from .physics import *
 
-def V(x,y,z):
-	return pyrr.Vector3([x,y,z])
+__live_imports__timestamps = dict()
+def live_imports():
+	importlib.invalidate_caches()
+	for m in [
+		'physics',
+		'scene',
+		]:
+		mtime = (Path(__file__).parent/(m+'.py')).stat().st_mtime
+		if m in __live_imports__timestamps:
+			if __live_imports__timestamps[m] < mtime:
+				print('Detected change in '+m+'. Reloading...')
+				globals()[m] = importlib.reload(globals()[m])
+		else:
+			globals()[m] = importlib.import_module(__package__+'.'+m)
+		__live_imports__timestamps[m] = mtime
+
+live_imports()
 
 class Orbit1Prototype(moderngl_window.WindowConfig):
 	title = "Testing..."
@@ -18,14 +33,6 @@ class Orbit1Prototype(moderngl_window.WindowConfig):
 		self.camera_enabled = False
 		self.prog = self.load_program('render.glsl')
 		self.sprite = moderngl_window.geometry.sphere(radius=1.0)
-		self.universe = [
-			Particle(0, V(0,0,0), V(0,0,0), 4*pi**2, 0.1), # A sun
-			Particle(1, V(0,1,0), V(-2*pi,0,0), 4*pi**2 / 500, 0.01), # A planet
-			Particle(2, V(0, 1.03, 0), V(-2*pi*1.25, 0, 0), 4*pi**2 / 500 / 25, 0.005), # A moon
-			Particle(3, V(0.5*3**0.5, 0.5, 0), V(-pi, pi*3**0.5, 0)*1.01, 0, 0.0025), # Satellite at a Lagrange point
-			Particle(4, V(-0.5*3**0.5, 0.5, 0), V(-pi, -pi*3**0.5, 0)*1.01, 0, 0.0025), # Another Lagrange satellite
-			Particle(5, V(0, -1.01, 0), V(2*pi/1.01, 0, 0), 0, 0.0025), # Horseshoe orbit (unstable)
-			]
 
 	def key_event(self, key, action, modifiers):
 		keys = self.wnd.keys
@@ -50,16 +57,19 @@ class Orbit1Prototype(moderngl_window.WindowConfig):
 
 
 	def render(self, time: float, frametime: float):
+		
+		live_imports()
+		
 		self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
 		
-		self.universe = step_chin(self.universe, 1/3600)
+		scene.universe = physics.step(scene.universe, 1/3600)
 		
 	
 		self.prog['m_proj'].write(self.camera.projection.matrix)
 		self.prog['m_camera'].write(self.camera.matrix)
 		
 		self.prog['color'].value = 1.0, 1.0, 1.0, 1.0
-		for p in self.universe:
+		for p in scene.universe:
 			self.prog['m_model'].write(
 				pyrr.matrix44.multiply(
 					pyrr.Matrix44.from_scale((p.radius, p.radius, p.radius), dtype='f4'),
