@@ -23,7 +23,7 @@ def live_imports():
 
 live_imports()
 
-class Orbit1Prototype(moderngl_window.WindowConfig):
+class Orbit2Prototype(moderngl_window.WindowConfig):
 	title = "Testing..."
 	resource_dir = (Path(__file__).parent).resolve()
 
@@ -83,4 +83,4 @@ class Orbit1Prototype(moderngl_window.WindowConfig):
 
 if __name__ == '__main__':
 	print('Testing...')
-	moderngl_window.run_window_config(Orbit1Prototype)
+	moderngl_window.run_window_config(Orbit2Prototype)

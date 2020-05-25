@@ -1,0 +1,38 @@
+#! /usr/bin/env bash
+
+# Called as: run-proto name
+
+# Runs one of the programs in the prototypes folder, and re-starts it when its main file changes.
+
+# Enter the virtualenv environment for our project.
+
+source project-environment/bin/activate
+
+# Some necessary environment variables.
+# These work for my machine (running Debian 10). They might not work on yours.
+
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+export GLCONTEXT_LINUX_LIBGL=libGL.so.1
+export GLCONTEXT_LINUX_LIBX11=libX11.so.6
+
+
+# The script proper.
+
+set -e
+
+cd "$(dirname "$(readlink -f "$0")")"
+
+watch_me="prototypes/$1/__main__.py"
+run_me="prototypes.$1"
+
+while true
+do
+	coproc python -m "$run_me"
+	coproc monitor {
+		inotifywait -r -e create -e move -e modify -e delete -e move_self -e delete_self -e attrib "$watch_me"
+		kill $COPROC_PID || true
+		wait $COPROC_PID || true
+	}
+	cat <&"${COPROC[0]}"
+	wait $monitor_PID
+done
