@@ -1,26 +1,16 @@
-import importlib
 from math import log, ceil, floor, pi
 from pathlib import Path
+import logging
+
 import pyrr
 import moderngl
 import moderngl_window
 
-__live_imports__timestamps = dict()
-def live_imports():
-	importlib.invalidate_caches()
-	for m in [
-		'physics',
-		'scene',
-		]:
-		mtime = (Path(__file__).parent/(m+'.py')).stat().st_mtime
-		if m in __live_imports__timestamps:
-			if __live_imports__timestamps[m] < mtime:
-				print('Detected change in '+m+'. Reloading...')
-				globals()[m] = importlib.reload(globals()[m])
-		else:
-			globals()[m] = importlib.import_module(__package__+'.'+m)
-		__live_imports__timestamps[m] = mtime
+from do_it_live import LiveImports
 
+logging.basicConfig(level=logging.INFO)
+
+live_import = LiveImports(['physics', 'scene'])
 live_imports()
 
 class Orbit2Prototype(moderngl_window.WindowConfig):

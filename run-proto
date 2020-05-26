@@ -24,6 +24,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 
 watch_me="prototypes/$1/__main__.py"
 run_me="prototypes.$1"
+export PYTHONPATH="${PYTHONPATH}:lib"
 
 while true
 do
