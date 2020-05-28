@@ -1,34 +1,48 @@
+from collections import namedtuple
 from pathlib import Path
 from typing import List
 import importlib
 import inspect
 import logging
+import re
 
-def LiveImports(imported: List[str]):
+def LiveImports(*import_paths: List[str]):
 	'''Reloads any of the listed modules when their files change.
 	The listed modules must be local to the module calling LiveImports.
 	'''
-	logger = logging.getLogger(__name__)
-	frameinfo = inspect.stack()[1]
-	file_name = frameinfo.filename
-	package_name = frameinfo.frame.f_globals['__package__']
-	globals_dict = frameinfo.frame.f_globals
 	
-	logger.info(f'Starting live imports in {package_name} ({file_name}).')
-	logger.info(f'Packages that will be live-imported: {imported}')
+	caller = inspect.stack()[1]
+	caller_globals = caller.frame.f_globals
+	caller_name = caller_globals['__package__']
 	
-	timestamps = dict()
+	logger = logging.getLogger(f'{__name__}-from-{caller_name}')
+	logger.info(f'Starting live imports in {caller_name}.')
+	logger.info(f'Packages that will be live-imported: {import_paths}')
+	
+	class ModuleInfo:
+		def __init__(self, module):
+			self.module = module
+			self.fullname = self.module.__name__
+			self.name = re.search(r'\w+$', self.fullname).group(0)
+			self.last_mtime = self.get_mtime()
+		
+		def reload(self):
+			self.module = importlib.reload(self.module)
+			self.last_mtime = self.get_mtime()
+		
+		def get_mtime(self):
+			return Path(self.module.__file__).stat().st_mtime
+	
+	modules = tuple(ModuleInfo(importlib.import_module(i, caller_name)) for i in import_paths)
+	logger.info(f'Imported for the first time. Qualified names: {tuple(m.fullname for m in modules)}')
+	
 	def reimport():
 		importlib.invalidate_caches()
-		for m in imported:
-			mtime = (Path(file_name).parent/(m+'.py')).stat().st_mtime
-			if m in timestamps:
-				if timestamps[m] < mtime:
-					logger.info(f'Detected change in {m}. Reloading...')
-					globals_dict[m] = importlib.reload(globals_dict[m])
-			else:
-				globals_dict[m] = importlib.import_module(package_name+'.'+m)
-			timestamps[m] = mtime
+		for m in modules:
+			if m.get_mtime() > m.last_mtime:
+				logger.info(f'Detected change in {m.fullname}. Reloading...')
+				m.reload()
+			caller_globals[m.name] = m.module
 	
 	reimport()
 	return reimport

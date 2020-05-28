@@ -10,7 +10,7 @@ from do_it_live import LiveImports
 
 logging.basicConfig(level=logging.INFO)
 
-live_import = LiveImports(['physics', 'scene'])
+live_imports = LiveImports('.physics', '.scene')
 live_imports()
 
 class Orbit2Prototype(moderngl_window.WindowConfig):
