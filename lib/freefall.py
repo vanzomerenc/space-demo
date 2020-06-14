@@ -3,7 +3,7 @@ import numpy
 import pyrr
 
 from collections import namedtuple
-from typing import Generic, List, NamedTuple, NewType
+from typing import Any, Generic, List, NamedTuple, NewType
 
 
 Scalar = float
@@ -19,9 +19,9 @@ TimeSpan = Tuple[Time, Time]
 Pos = NewType(Vector)
 Vel = NewType(Vector)
 Acc = NewType(Vector)
-DAcc = NewType(Vector)
+DAcc = NewType(Scalar)
 
-Layer = int
+Layer = str
 def Grouped(T):
 	return Dict[Layer, List[T]]
 
@@ -44,20 +44,16 @@ class FieldRule(Generic[Emitter, Reactor]):
 	"""A field applies acceleration to particles that interact with the field.
 	"""
 	@abstractmethod
-	def acc(Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
+	def acc(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
 		"""Calculate acceleration for a single reactor based on its position and state.
 		"""
 	
 	@abstractmethod
-	def acc_div(Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
+	def acc_div(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
 		"""Calculate acceleration and its divergence at the same time.
 		Both of these are needed for some calculations, and it's often
 		most efficient to calculate them both at the same time.
 		"""
-
-
-class FieldSolver(Generic[Field, Reactor]):
-	
 
 @dataclass
 class Field:
@@ -67,12 +63,12 @@ class Field:
 	R: Layer
 	
 	@abstractmethod
-	def acc(Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Acc]:
+	def acc(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Acc]:
 		"""
 		"""
 	
 	@abstractmethod
-	def acc_div(Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Tuple[Acc, DAcc]]:
+	def acc_div(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Tuple[Acc, DAcc]]:
 		"""
 		"""
 
@@ -90,11 +86,11 @@ class FieldImpl(Field, Generic[Emitter, Reactor]):
 	EQ: List[Emitter]
 	RQ: List[Reactor]
 	
-	def acc(Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Acc]:
-		return [rule.acc(Eq, EQ, rq, rQ, t) for rq, rQ in zip(Rq, RQ)]
+	def acc(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Acc]:
+		return [rule.acc(Eq, self.EQ, Rqi, RQi, t) for Rqi, RQi in zip(Rq, self.RQ)]
 	
-	def acc_div(Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Tuple[Acc, DAcc]]:
-		return [rule.acc_div(Eq, EQ, rq, rQ, t) for rq, rQ in zip(Rq, RQ)]
+	def acc_div(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Tuple[Acc, DAcc]]:
+		return [rule.acc_div(Eq, self.EQ, Rqi, RQi, t) for Rqi, RQi in zip(Rq, self.RQ)]
 
 
 @dataclass
@@ -109,48 +105,48 @@ class Integrator:
 	# I am not sure if the comments in these functions make things any clearer,
 	# but they at least help me remember what is going on.
 	
-	def _move_step(q: Grouped[Pos], p: Grouped[Vel], e1: Scalar) -> Grouped[Pos]:
+	def _move_step(self, q: Grouped[Pos], p: Grouped[Vel], e1: Scalar) -> Grouped[Pos]:
 		return {
 			R: [               # per layer, a list of:
-				qq + e1*pp         # new positions
-				for qq, pp in zip( # per particle, from:
+				qi + e1*pi         # new positions
+				for qi, pi in zip( # per particle, from:
 					p[R],              # a list of old positions, and
 					q[R])]             # a list of velocities
 			for R in q.keys()} # for all reactor layers.
 	
-	def _acc_step(q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar) -> Grouped[Vel]:
+	def _acc_step(self, q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar) -> Grouped[Vel]:
 		return {
 			R: [                         # per layer, a list of:
-				pp + e1*aa                   # new velocities
-				for pp, aa in zip(           # per particle, from:
-					p[FF.R],                     # a list of old velocities, and
+				pi + e1*ai                   # new velocities
+				for pi, ai in zip(           # per particle, from:
+					p[Fj.R],                     # a list of old velocities, and
 					[                            # a list of accelerations, from:
-						sum(a)                       # a sum of per-field accelerations
-						for a in zip(*[              # per particle, from the same per field, from:
-							F.acc(q[F.E], q[R], t)       # the state used to calculate the field
-							for F in RF[R]]))]]          # per field affecting the layer
+						sum(ai)                      # a sum of per-field accelerations
+						for ai in zip(*[             # per particle, from the same per field, from:
+							Fj.acc(q[Fj.E], q[R], t)     # the state used to calculate the field
+							for Fj in self.RF[R]]))]]    # per field affecting the layer
 			for R in p.keys()}           # for all reactor layers.
 	
-	def _acc_div_step(q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar, e2: Scalar) -> Grouped[Vel]:
+	def _acc_div_step(self, q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar, e2: Scalar) -> Grouped[Vel]:
 		return {
-			R: [                         # per layer, a list of:
-				pp + e1*aa + 2*e2*aa*Daa     # new velocities
-				for pp, aa, Daa in zip(      # per particle, from:
-					p[FF.R],                     # a list of old velocities, and
-					zip(*[                       # a list each of accelerations and divergences, from:
-						(                            # (acceleration, divergence) tuples, from:
-							sum([a for a, Da in aDa]),   # a sum of per-field accelerations, and
-							sum([Da for a, Da in aDa]))  # a sum of per-field divergences
-						for aDa in zip(*[            # per particle, from the same per field, from:
-							F.acc_div(q[F.E], q[R], t)   # the state used to calculate the field
-							for F in RF[R]]))])]         # per field affecting the layer
-			for R in p.keys()}           # for all reactor layers.
+			R: [                               # per layer, a list of:
+				pi + e1*ai + 2*e2*Dai*ai           # new velocities
+				for pi, ai, Dai in zip(            # per particle, from:
+					p[Fj.R],                           # a list of old velocities, and
+					zip(*[                             # a list each of accelerations and divergences, from:
+						(                                  # (acceleration, divergence) tuples, from:
+							sum([aij for aij, Daij in aDai]),  # a sum of per-field accelerations, and
+							sum([Daij for aij, Daij in aDai])) # a sum of per-field divergences
+						for aDai in zip(*[                 # per particle, from the same per field, from:
+							Fj.acc_div(q[Fj.E], q[R], t)       # the state used to calculate the field
+							for Fj in self.RF[R]]))])]         # per field affecting the layer
+			for R in p.keys()}                 # for all reactor layers.
 	
 	# To do: does it make sense to only provide a single time step for time-varying fields,
 	# as we do here? What time steps should we be using? Should we try treating time
 	# similarly to all the spatial coordinates?
 	
-	def step_verlet(q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
+	def step_verlet(self, q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
 		"""Verlet integration. It's great!
 		Unfortunately, Verlet integration causes a noticeable precession when
 		solving Kepler's problem unless the steps are very small.
@@ -158,12 +154,12 @@ class Integrator:
 		"""
 		dt = T[-1] - T[0]
 		
-		p1 =  _acc_step(q0, p0, t, (1/2)*dt)
-		q1 = _move_step(q0, p1,          dt)
-		p2 =  _acc_step(q1, p1, t, (1/2)*dt)
+		p1 = self. _acc_step(q0, p0, t, (1/2)*dt)
+		q1 = self._move_step(q0, p1,          dt)
+		p2 = self. _acc_step(q1, p1, t, (1/2)*dt)
 		return q1, p2
 	
-	def step_chin(q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
+	def step_chin(self, q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
 		"""The 4th-order symplectic integration algorithm described in
 		'Higher Order Force Gradient Symplectic Algorithms', by Chin and Kidwell (2000)
 		https://arxiv.org/abs/physics/0006082v1
@@ -182,11 +178,41 @@ class Integrator:
 		"""
 		dt = T[-1] - T[0]
 		
-		q1 =    _move_step(q0, p0,    (1/6)*dt)
-		p1 =     _acc_step(q1, p0, t, (3/8)*dt)
-		q2 =    _move_step(q1, p1,    (1/3)*dt)
-		p2 = _acc_div_step(q2, p1, t, (1/4)*dt, (1/192)*dt*dt)
-		q3 =    _move_step(q2, p2,    (1/3)*dt)
-		p3 =     _acc_step(q3, p2, t, (3/8)*dt)
-		q4 =    _move_step(q3, p3,    (1/6)*dt)
+		q1 = self.   _move_step(q0, p0,    (1/6)*dt)
+		p1 = self.    _acc_step(q1, p0, t, (3/8)*dt)
+		q2 = self.   _move_step(q1, p1,    (1/3)*dt)
+		p2 = self._acc_div_step(q2, p1, t, (1/4)*dt, (1/192)*dt*dt)
+		q3 = self.   _move_step(q2, p2,    (1/3)*dt)
+		p3 = self.    _acc_step(q3, p2, t, (3/8)*dt)
+		q4 = self.   _move_step(q3, p3,    (1/6)*dt)
 		return q4, p3
+
+
+
+
+Mass = NewType(Scalar)
+
+class GravityFieldRule(FieldRule[Mass, None]):
+	
+	@abstractmethod
+	def acc(self, Eq: List[Pos], EQ: List[Mass], Rq: Pos, RQ: None, t: TimeSpan) -> Acc:
+		a = 0 # Total acceleration times some constant.
+		for Eqi, EQi in zip(Eq, EQ):
+			if Eqi != Rq and EQi > 0:
+				_ri_ = Eqi - Rq
+				ri = pyrr.vector.length(_ri_)
+				a += (EQi/(ri*ri*ri))*_ri_
+		return a
+	
+	@abstractmethod
+	def acc_div(self, Eq: List[Pos], EQ: List[Mass], Rq: Pos, RQ: None, t: TimeSpan) -> Tuple[Acc, DAcc]:
+		a = 0  # Total acceleration times some constant.
+		Da = 0 # Divergence of total acceleration times some constant.
+		for Eqi, EQi in zip(Eq, EQ):
+			if Eqi != Rq and EQi > 0:
+				_ri_ = Eqi - Rq
+				ri = pyrr.vector.length(_ri_)
+				Dai = EQi/(ri*ri*ri) # Divergence of single-interaction acceleration times some constant.
+				Da += Dai
+				a += Dai*_ri_
+		return a, 2*Da
