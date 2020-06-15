@@ -1,3 +1,7 @@
+# Character palette for non-ASCII characters used in this file, with ASCII replacements in parentheses.
+# ᵢⱼₖ (ijk): implied loop indices, as Unicode subscripts to try to be more readable.
+# ∇ (D): gradient of a scalar or divergence of a vector.
+
 import abc
 import numpy
 import pyrr
@@ -21,15 +25,9 @@ Vel = NewType(Vector)
 Acc = NewType(Vector)
 DAcc = NewType(Scalar)
 
-Layer = str
-def Grouped(T):
-	return Dict[Layer, List[T]]
+Layer = NewType(str)
+Property = NewType(str)
 
-
-# Why the split between FieldRule and Field?
-# The idea is that FieldRule is completely stateless,
-# and Field/FieldImpl add the bare minimum
-# amount of state necessary to make things work together.
 
 # Why is there a time parameter in the acceleration calculations?
 # Because time-varying fields are a nice thing to have.
@@ -39,108 +37,103 @@ def Grouped(T):
 # sure the calculation would still be correct.
 # I'll probably figure it out if I ever want to simulate magnetism
 # or other relativistic effects.
-
 class FieldRule(Generic[Emitter, Reactor]):
 	"""A field applies acceleration to particles that interact with the field.
 	"""
+	
+	@property
 	@abstractmethod
-	def acc(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
-		"""Calculate acceleration for a single reactor based on its position and state.
+	def E(self) -> Property:
+		"""The name of the property of the emitters of this field that affects
+		the field interaction.
+		"""
+	
+	@property
+	@abstractmethod
+	def R(self) -> Property:
+		"""The name of the property of the reactors to this field that affects
+		the field interaction.
 		"""
 	
 	@abstractmethod
-	def acc_div(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
+	def acc(self, Eq: Pos, EQ: Emitter, Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
+		"""Calculate acceleration applied by a single emitter to a single reactor.
+		"""
+	
+	@abstractmethod
+	def acc_div(self, Eq: Pos, EQ: Emitter, Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
 		"""Calculate acceleration and its divergence at the same time.
 		Both of these are needed for some calculations, and it's often
 		most efficient to calculate them both at the same time.
-		"""
-
-@dataclass
-class Field:
-	"""
-	"""
-	E: Layer
-	R: Layer
-	
-	@abstractmethod
-	def acc(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Acc]:
-		"""
-		"""
-	
-	@abstractmethod
-	def acc_div(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> Sequence[Tuple[Acc, DAcc]]:
-		"""
 		"""
 
 
 # To do: I'm expecting the most common case to be many reactors that each interact
 # with a few small groups of emitters. Does it make sense to do a complete calculation
 # for each reactor separately, and thereby save memory? Or to make things really
-# predictable by doing calculations for each emitter group separately?
+# predictable by doing calculations for each field rule separately?
 # Maybe something in the middle?
 # This question is probably easily answered by profiling.
-
-@dataclass
-class FieldImpl(Field, Generic[Emitter, Reactor]):
-	rule: FieldRule[Emitter, Reactor]
-	EQ: List[Emitter]
-	RQ: List[Reactor]
-	
-	def acc(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Acc]:
-		return [rule.acc(Eq, self.EQ, Rqi, RQi, t) for Rqi, RQi in zip(Rq, self.RQ)]
-	
-	def acc_div(self, Eq: List[Pos], Rq: List[Pos], t: TimeSpan) -> List[Tuple[Acc, DAcc]]:
-		return [rule.acc_div(Eq, self.EQ, Rqi, RQi, t) for Rqi, RQi in zip(Rq, self.RQ)]
 
 
 @dataclass
 class Integrator:
 	"""
 	"""
-	# Each field is entered in here twice: once under its emitter layer,
-	# and once under its reactor layer. So we can find them.
-	EF: Grouped[Field]
-	RF: Grouped[Field]
 	
-	# I am not sure if the comments in these functions make things any clearer,
-	# but they at least help me remember what is going on.
+	F: Dict[Layer, List[Tuple[FieldRule, Layer]]]
 	
-	def _move_step(self, q: Grouped[Pos], p: Grouped[Vel], e1: Scalar) -> Grouped[Pos]:
+	def _move_step(self,
+				q: Dict[Layer, List[Pos]],
+				p: Dict[Layer, List[Vel]],
+				Q: Dict[Tuple[Property, Layer], List[Any]],
+				t: TimeSpan,
+				e1: Scalar
+				) -> Dict[Layer, List[Pos]]:
 		return {
-			R: [               # per layer, a list of:
-				qi + e1*pi         # new positions
-				for qi, pi in zip( # per particle, from:
-					p[R],              # a list of old positions, and
-					q[R])]             # a list of velocities
-			for R in q.keys()} # for all reactor layers.
+			R: [qᵢ + e1*pᵢ for qᵢ, pᵢ in zip(q[R], p[R])]
+			for R in q.keys()}
 	
-	def _acc_step(self, q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar) -> Grouped[Vel]:
+	def _acc_step(self,
+				q: Dict[Layer, List[Pos]],
+				p: Dict[Layer, List[Vel]],
+				Q: Dict[Tuple[Property, Layer], List[Any]],
+				t: TimeSpan,
+				e1: Scalar
+				) -> Dict[Layer, List[Vel]]:
 		return {
-			R: [                         # per layer, a list of:
-				pi + e1*ai                   # new velocities
-				for pi, ai in zip(           # per particle, from:
-					p[Fj.R],                     # a list of old velocities, and
-					[                            # a list of accelerations, from:
-						sum(ai)                      # a sum of per-field accelerations
-						for ai in zip(*[             # per particle, from the same per field, from:
-							Fj.acc(q[Fj.E], q[R], t)     # the state used to calculate the field
-							for Fj in self.RF[R]]))]]    # per field affecting the layer
-			for R in p.keys()}           # for all reactor layers.
+			R: [
+				pᵢ + e1*sum(
+					Fⱼ.acc(qₖ, Qⱼₖ, qᵢ, Qᵢⱼ, t)
+					for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R])
+					for qₖ, Qⱼₖ in zip(q[Eⱼ], Q[Fⱼ.E, Eⱼ]))
+				for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))]
+			for R in p.keys()}
 	
-	def _acc_div_step(self, q: Grouped[Pos], p: Grouped[Vel], t: TimeSpan, e1: Scalar, e2: Scalar) -> Grouped[Vel]:
+	def _acc_div_step(self,
+				q: Dict[Layer, List[Pos]],
+				p: Dict[Layer, List[Vel]],
+				Q: Dict[Tuple[Property, Layer], List[Any]],
+				t: TimeSpan,
+				e1: Scalar,
+				e2: Scalar
+				) -> Dict[Layer, List[Vel]]:
 		return {
-			R: [                               # per layer, a list of:
-				pi + e1*ai + 2*e2*Dai*ai           # new velocities
-				for pi, ai, Dai in zip(            # per particle, from:
-					p[Fj.R],                           # a list of old velocities, and
-					zip(*[                             # a list each of accelerations and divergences, from:
-						(                                  # (acceleration, divergence) tuples, from:
-							sum([aij for aij, Daij in aDai]),  # a sum of per-field accelerations, and
-							sum([Daij for aij, Daij in aDai])) # a sum of per-field divergences
-						for aDai in zip(*[                 # per particle, from the same per field, from:
-							Fj.acc_div(q[Fj.E], q[R], t)       # the state used to calculate the field
-							for Fj in self.RF[R]]))])]         # per field affecting the layer
-			for R in p.keys()}                 # for all reactor layers.
+			R: [
+				pᵢ + e1*aᵢ + e2*2*∇aᵢ*aᵢ
+				for pᵢ, aᵢ, ∇aᵢ in (
+					# This ends up iterating over a∇aᵢ twice, which is inefficient.
+					# It's been left the way it is for the sake of clarity.
+					(pᵢ, sum(aᵢⱼ for aᵢⱼ, ∇aᵢⱼ in a∇aᵢ), sum(∇aᵢⱼ for aᵢⱼ, ∇aᵢⱼ in a∇aᵢ))
+					for pᵢ, a∇aᵢ in (
+						pᵢ,
+						(
+							Fⱼ.div_acc(qₖ, Qⱼₖ, qᵢ, Qᵢⱼ, t)
+							for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R])
+							for qₖ, Qⱼₖ in zip(q[Eⱼ], Q[Fⱼ.E, Eⱼ]))
+						for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))))]
+			for R in p.keys()}
+	
 	
 	# To do: does it make sense to only provide a single time step for time-varying fields,
 	# as we do here? What time steps should we be using? Should we try treating time
@@ -195,24 +188,21 @@ Mass = NewType(Scalar)
 class GravityFieldRule(FieldRule[Mass, None]):
 	
 	@abstractmethod
-	def acc(self, Eq: List[Pos], EQ: List[Mass], Rq: Pos, RQ: None, t: TimeSpan) -> Acc:
-		a = 0 # Total acceleration times some constant.
-		for Eqi, EQi in zip(Eq, EQ):
-			if Eqi != Rq and EQi > 0:
-				_ri_ = Eqi - Rq
-				ri = pyrr.vector.length(_ri_)
-				a += (EQi/(ri*ri*ri))*_ri_
-		return a
+	def acc(self, Eq: Pos, EQ: Mass, Rq: Pos, RQ: None, t: TimeSpan) -> Acc:
+		if Eq == Rq or EQ == 0:
+			return 0.0
+		
+		_r_ = Eq - Rq
+		r = pyrr.vector.length(_r_)
+		return (EQ/(r*r*r))*_r_
 	
 	@abstractmethod
-	def acc_div(self, Eq: List[Pos], EQ: List[Mass], Rq: Pos, RQ: None, t: TimeSpan) -> Tuple[Acc, DAcc]:
-		a = 0  # Total acceleration times some constant.
-		Da = 0 # Divergence of total acceleration times some constant.
-		for Eqi, EQi in zip(Eq, EQ):
-			if Eqi != Rq and EQi > 0:
-				_ri_ = Eqi - Rq
-				ri = pyrr.vector.length(_ri_)
-				Dai = EQi/(ri*ri*ri) # Divergence of single-interaction acceleration times some constant.
-				Da += Dai
-				a += Dai*_ri_
-		return a, 2*Da
+	def acc_div(self, Eq: Pos, EQ: Mass, Rq: Pos, RQ: None, t: TimeSpan) -> Tuple[Acc, DAcc]:
+		if Eq == Rq or EQ == 0:
+			return 0.0, 0.0
+		
+		_r_ = Eq - Rq
+		r = pyrr.vector.length(_r_)
+		∇a = EQ/(r*r*r)
+		a = ∇a*_r_
+		return a, 2*∇a
