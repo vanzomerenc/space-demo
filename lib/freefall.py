@@ -56,12 +56,12 @@ class FieldRule(Generic[Emitter, Reactor]):
 		"""
 	
 	@abstractmethod
-	def acc(self, Eq: Pos, EQ: Emitter, Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
-		"""Calculate acceleration applied by a single emitter to a single reactor.
+	def acc(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Acc:
+		"""Calculate acceleration applied by a layer of emitters to a single reactor.
 		"""
 	
 	@abstractmethod
-	def acc_div(self, Eq: Pos, EQ: Emitter, Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
+	def acc_div(self, Eq: List[Pos], EQ: List[Emitter], Rq: Pos, RQ: Reactor, t: TimeSpan) -> Tuple[Acc, DAcc]:
 		"""Calculate acceleration and its divergence at the same time.
 		Both of these are needed for some calculations, and it's often
 		most efficient to calculate them both at the same time.
@@ -104,9 +104,8 @@ class Integrator:
 		return {
 			R: [
 				pᵢ + e1*sum(
-					Fⱼ.acc(qₖ, Qⱼₖ, qᵢ, Qᵢⱼ, t)
-					for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R])
-					for qₖ, Qⱼₖ in zip(q[Eⱼ], Q[Fⱼ.E, Eⱼ]))
+					Fⱼ.acc(q[Eⱼ], Q[Fⱼ.E, Eⱼ], qᵢ, Qᵢⱼ, t)
+					for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R]))
 				for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))]
 			for R in p.keys()}
 	
@@ -128,9 +127,8 @@ class Integrator:
 					for pᵢ, a∇aᵢ in (
 						pᵢ,
 						(
-							Fⱼ.div_acc(qₖ, Qⱼₖ, qᵢ, Qᵢⱼ, t)
-							for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R])
-							for qₖ, Qⱼₖ in zip(q[Eⱼ], Q[Fⱼ.E, Eⱼ]))
+							Fⱼ.div_acc(q[Eⱼ], Q[Fⱼ.E, Eⱼ], qᵢ, Qᵢⱼ, t)
+							for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R]))
 						for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))))]
 			for R in p.keys()}
 	
@@ -189,20 +187,25 @@ class GravityFieldRule(FieldRule[Mass, None]):
 	
 	@abstractmethod
 	def acc(self, Eq: Pos, EQ: Mass, Rq: Pos, RQ: None, t: TimeSpan) -> Acc:
-		if Eq == Rq or EQ == 0:
-			return 0.0
-		
-		_r_ = Eq - Rq
-		r = pyrr.vector.length(_r_)
-		return (EQ/(r*r*r))*_r_
+		a = 0
+		for Eqᵢ, EQᵢ in zip(Eq, EQ):
+			if Eq == Rq or EQ == 0:
+				continue
+			_rᵢ_ = Eqᵢ - Rq
+			rᵢ = pyrr.vector.length(_rᵢ_)
+			a += (EQᵢ/(rᵢ*rᵢ*rᵢ))*_rᵢ_
+		return a
 	
 	@abstractmethod
 	def acc_div(self, Eq: Pos, EQ: Mass, Rq: Pos, RQ: None, t: TimeSpan) -> Tuple[Acc, DAcc]:
-		if Eq == Rq or EQ == 0:
-			return 0.0, 0.0
-		
-		_r_ = Eq - Rq
-		r = pyrr.vector.length(_r_)
-		∇a = EQ/(r*r*r)
-		a = ∇a*_r_
+		a = 0
+		∇a = 0
+		for Eqᵢ, EQᵢ in zip(Eq, EQ):
+			if Eq == Rq or EQ == 0:
+				continue
+			_rᵢ_ = Eqᵢ - Rq
+			rᵢ = pyrr.vector.length(_rᵢ_)
+			∇aᵢ = EQᵢ/(rᵢ*rᵢ*rᵢ)
+			∇a += ∇aᵢ
+			a += ∇aᵢ*_rᵢ_
 		return a, 2*∇a
