@@ -81,42 +81,41 @@ class Integrator:
 	"""
 	"""
 	
-	F: Dict[Layer, List[Tuple[FieldRule, Layer]]]
 	
 	def _move_step(self,
-				q: Dict[Layer, List[Pos]],
-				p: Dict[Layer, List[Vel]],
-				Q: Dict[Tuple[Property, Layer], List[Any]],
-				t: TimeSpan,
-				e1: Scalar
-				) -> Dict[Layer, List[Pos]]:
+			q: Dict[Layer, List[Pos]],
+			p: Dict[Layer, List[Vel]],
+			e1: Scalar
+			) -> Dict[Layer, List[Pos]]:
 		return {
 			R: [qᵢ + e1*pᵢ for qᵢ, pᵢ in zip(q[R], p[R])]
 			for R in q.keys()}
 	
 	def _acc_step(self,
-				q: Dict[Layer, List[Pos]],
-				p: Dict[Layer, List[Vel]],
-				Q: Dict[Tuple[Property, Layer], List[Any]],
-				t: TimeSpan,
-				e1: Scalar
-				) -> Dict[Layer, List[Vel]]:
+			q: Dict[Layer, List[Pos]],
+			p: Dict[Layer, List[Vel]],
+			Q: Dict[Tuple[Property, Layer], List[Any]],
+			F: Dict[Layer, List[Tuple[FieldRule, Layer]]],
+			t: TimeSpan,
+			e1: Scalar
+			) -> Dict[Layer, List[Vel]]:
 		return {
 			R: [
 				pᵢ + e1*sum(
 					Fⱼ.acc(q[Eⱼ], Q[Fⱼ.E, Eⱼ], qᵢ, Qᵢⱼ, t)
-					for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R]))
-				for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))]
+					for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *F[R]))
+				for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in F[R])))]
 			for R in p.keys()}
 	
 	def _acc_div_step(self,
-				q: Dict[Layer, List[Pos]],
-				p: Dict[Layer, List[Vel]],
-				Q: Dict[Tuple[Property, Layer], List[Any]],
-				t: TimeSpan,
-				e1: Scalar,
-				e2: Scalar
-				) -> Dict[Layer, List[Vel]]:
+			q: Dict[Layer, List[Pos]],
+			p: Dict[Layer, List[Vel]],
+			Q: Dict[Tuple[Property, Layer], List[Any]],
+			F: Dict[Layer, List[Tuple[FieldRule, Layer]]],
+			t: TimeSpan,
+			e1: Scalar,
+			e2: Scalar
+			) -> Dict[Layer, List[Vel]]:
 		return {
 			R: [
 				pᵢ + e1*aᵢ + e2*2*∇aᵢ*aᵢ
@@ -128,8 +127,8 @@ class Integrator:
 						pᵢ,
 						(
 							Fⱼ.div_acc(q[Eⱼ], Q[Fⱼ.E, Eⱼ], qᵢ, Qᵢⱼ, t)
-							for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *self.F[R]))
-						for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in self.F[R])))))]
+							for Qᵢⱼ, Fⱼ, Eⱼ in zip(Qᵢ, *F[R]))
+						for qᵢ, pᵢ, Qᵢ in zip(q[R], p[R], zip(*(Q[Fⱼ.R, R] for Fⱼ, Eⱼ in F[R])))))]
 			for R in p.keys()}
 	
 	
@@ -137,7 +136,13 @@ class Integrator:
 	# as we do here? What time steps should we be using? Should we try treating time
 	# similarly to all the spatial coordinates?
 	
-	def step_verlet(self, q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
+	def step_verlet(self,
+			q0: Dict[Layer, List[Pos]],
+			p0: Dict[Layer, List[Vel]],
+			Q: Dict[Tuple[Property, Layer], List[Any]],
+			F: Dict[Layer, List[Tuple[FieldRule, Layer]]],
+			t: TimeSpan
+			) -> Tuple[Dict[Layer, List[Pos]], Dict[Layer, List[Vel]]]:
 		"""Verlet integration. It's great!
 		Unfortunately, Verlet integration causes a noticeable precession when
 		solving Kepler's problem unless the steps are very small.
@@ -145,12 +150,18 @@ class Integrator:
 		"""
 		dt = T[-1] - T[0]
 		
-		p1 = self. _acc_step(q0, p0, t, (1/2)*dt)
-		q1 = self._move_step(q0, p1,          dt)
-		p2 = self. _acc_step(q1, p1, t, (1/2)*dt)
+		p1 = self. _acc_step(q0, p0, Q, F, t, (1/2)*dt)
+		q1 = self._move_step(q0, p1,                dt)
+		p2 = self. _acc_step(q1, p1, Q, F, t, (1/2)*dt)
 		return q1, p2
 	
-	def step_chin(self, q0: Grouped[Pos], p0: Grouped[Vel], t: TimeSpan) -> Tuple[Grouped[Pos], Grouped[Vel]]:
+	def step_chin(self,
+			q0: Dict[Layer, List[Pos]],
+			p0: Dict[Layer, List[Vel]],
+			Q: Dict[Tuple[Property, Layer], List[Any]],
+			F: Dict[Layer, List[Tuple[FieldRule, Layer]]],
+			t: TimeSpan
+			) -> Tuple[Dict[Layer, List[Pos]], Dict[Layer, List[Vel]]]:
 		"""The 4th-order symplectic integration algorithm described in
 		'Higher Order Force Gradient Symplectic Algorithms', by Chin and Kidwell (2000)
 		https://arxiv.org/abs/physics/0006082v1
@@ -169,13 +180,13 @@ class Integrator:
 		"""
 		dt = T[-1] - T[0]
 		
-		q1 = self.   _move_step(q0, p0,    (1/6)*dt)
-		p1 = self.    _acc_step(q1, p0, t, (3/8)*dt)
-		q2 = self.   _move_step(q1, p1,    (1/3)*dt)
-		p2 = self._acc_div_step(q2, p1, t, (1/4)*dt, (1/192)*dt*dt)
-		q3 = self.   _move_step(q2, p2,    (1/3)*dt)
-		p3 = self.    _acc_step(q3, p2, t, (3/8)*dt)
-		q4 = self.   _move_step(q3, p3,    (1/6)*dt)
+		q1 = self.   _move_step(q0, p0,          (1/6)*dt)
+		p1 = self.    _acc_step(q1, p0, Q, F, t, (3/8)*dt)
+		q2 = self.   _move_step(q1, p1,          (1/3)*dt)
+		p2 = self._acc_div_step(q2, p1, Q, F, t, (1/4)*dt, (1/192)*dt*dt)
+		q3 = self.   _move_step(q2, p2,          (1/3)*dt)
+		p3 = self.    _acc_step(q3, p2, Q, F, t, (3/8)*dt)
+		q4 = self.   _move_step(q3, p3,          (1/6)*dt)
 		return q4, p3
 
 
@@ -184,6 +195,8 @@ class Integrator:
 Mass = NewType(Scalar)
 
 class GravityFieldRule(FieldRule[Mass, None]):
+	"""An example rule for Newtonian gravity
+	"""
 	
 	@abstractmethod
 	def acc(self, Eq: Pos, EQ: Mass, Rq: Pos, RQ: None, t: TimeSpan) -> Acc:
@@ -209,3 +222,80 @@ class GravityFieldRule(FieldRule[Mass, None]):
 			∇a += ∇aᵢ
 			a += ∇aᵢ*_rᵢ_
 		return a, 2*∇a
+
+
+# In the future, particle and interaction IDs will probably be int.
+# Since this is a prototype where we don't care about
+# performance, str is a bit more convenient.
+Particle = NewType(str)
+Field = NewType(str)
+
+@dataclass
+class Universe:
+	"""
+	"""
+	_n: Dict[Layer, List[Particle]]                 # Particle names
+	_q: Dict[Layer, List[Pos]]                      # Particle positions
+	_p: Dict[Layer, List[Vel]]                      # Particle velocities
+	_Q: Dict[Layer, Dict[Property, List[Any]]]      # Particle properties
+	_R: Dict[Layer, Set[Field]]                     # Fields that particles react to
+	_E: Dict[Layer, Set[Field]]                     # Fields that particles emit
+	_F: Dict[Field, Tuple[Layer, Layer, FieldRule]] # The layers and rule for each field
+	
+	def create_layer(self, properties: Set[Property]) -> Layer:
+		L = ID()
+		self._n[L] = list()
+		self._q[L] = list()
+		self._p[L] = list()
+		self._Q[L] = {p: list() for p in properties}
+		self._R[L] = set()
+		self._E[L] = set()
+		return L
+	
+	def destroy_layer(self, layer: Layer) -> None:
+		L = layer
+		del self._n[L]
+		del self._q[L]
+		del self._p[L]
+		del self._Q[L]
+		for Fᵢ in self._R[L]:
+			del self.F[Fᵢ]
+		del self._R[L]
+		for Fᵢ in self._E[L]:
+			del self.F[Fᵢ]
+		del self._E[L]
+	
+	def create_field(self, reactor: Layer, rule: FieldRule, emitter: Layer) -> Field:
+		F = ID()
+		self._R[reactor].add(F)
+		self._E[emitter].add(F)
+		self._F[F] = reactor, rule, emitter
+		return F
+	
+	def destroy_field(self, field: Field) -> None:
+		F = field
+		R, _, E = self._F[F]
+		self._R[R].remove(F)
+		self._E[E].remove(F)
+		del self._F[F]
+	
+	def create_particle(self,
+			layer: Layer,
+			position: Pos,
+			velocity: Vel,
+			charges: Dict[Property, Any],
+			) -> Particle
+		pass
+	
+	def destroy_particle(self, particle: Particle) -> None:
+		pass
+	
+	def get_position(self, particle: Particle) -> Pos:
+		pass
+	
+	def get_velocity(self, particle: Particle) -> Vel:
+		pass
+	
+	def get_charge(self, particle: Particle, charge: Property) -> Any:
+		pass
+	+
