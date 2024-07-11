@@ -28,7 +28,7 @@ export PYTHONPATH="${PYTHONPATH}:lib"
 
 while true
 do
-	coproc python -m "$run_me"
+	coproc python3 -m "$run_me"
 	coproc monitor {
 		inotifywait -r -e create -e move -e modify -e delete -e move_self -e delete_self -e attrib "$watch_me"
 		kill $COPROC_PID || true
